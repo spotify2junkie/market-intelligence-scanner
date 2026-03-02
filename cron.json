@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": "market-intelligence-scanner",
+      "schedule": "*/30 21-23,0-1 * * 1-5",
+      "command": "npx tsx /Users/yh/.openclaw/workspace/market-intelligence-scanner/scanner.ts",
+      "timezone": "Asia/Shanghai",
+      "enabled": true,
+      "description": "市场情报扫描器 - 美股交易时段每30分钟运行"
+    }
+  ]
+}

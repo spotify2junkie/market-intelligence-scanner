@@ -1,0 +1,33 @@
+{
+  "name": "market-intelligence-scanner",
+  "version": "1.0.0",
+  "description": "市场情报扫描器 - 实时监控ETF板块轮动、个股表现和新闻情感",
+  "main": "dist/scanner.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/scanner.js",
+    "dev": "ts-node scanner.ts",
+    "scan": "npm run build && npm start",
+    "watch": "nodemon --exec ts-node scanner.ts"
+  },
+  "keywords": [
+    "market",
+    "intelligence",
+    "scanner",
+    "etf",
+    "sector-rotation",
+    "trading"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/node-fetch": "^2.6.9",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.2",
+    "nodemon": "^3.0.0"
+  }
+}
