@@ -90,11 +90,14 @@ function generateSectorRotationSection(analyses: EtfPairAnalysis[]): string {
 /**
  * 生成个股表格（精简版，移除 Agent 分析）
  */
-function generateWatchlistSection(analyses: WatchlistItemAnalysis[]): string {
+function generateWatchlistSection(analyses: WatchlistItemAnalysis[], marketStatus: { status: string }): string {
   let section = '## 👀 Watch List\n\n';
 
+  // 根据市场状态调整涨跌列标题
+  const changeLabel = marketStatus.status === '开盘' ? '涨跌' : '上日涨跌';
+
   // 单一表格：股票、价格、涨跌、RSI、MACD、支撑位、阻力位
-  section += '| 股票 | 价格 | 涨跌 | RSI | MACD | 支撑 | 阻力 |\n';
+  section += `| 股票 | 价格 | ${changeLabel} | RSI | MACD | 支撑 | 阻力 |\n`;
   section += '|------|------|------|-----|------|------|------|\n';
 
   for (const analysis of analyses) {
@@ -254,7 +257,7 @@ export function generateReport(report: MarketIntelligenceReport): string {
   markdown += '\n---\n\n';
 
   // 2. 个股表格
-  markdown += generateWatchlistSection(report.watchlist);
+  markdown += generateWatchlistSection(report.watchlist, marketStatus);
   markdown += '\n---\n\n';
 
   // 3. 新闻摘要
