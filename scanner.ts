@@ -4,9 +4,9 @@
 import { CONFIG } from './config';
 import { MarketIntelligenceReport, WatchlistItemAnalysis, NewsAnalysis } from './fetchers/types';
 import { analyzeSectorRotation, calculateOverallSentiment, calculateRiskLevel } from './analyzers/sector-rotation';
-import { analyzeWatchlist, getHighConfidenceSignals, getVolatileStocks } from './analyzers/watchlist-tracker';
-import { aggregateNews, getHighImpactNews, getNegativeNews } from './analyzers/news-aggregator';
-import { generateReport, generateSummary } from './reporter';
+import { analyzeWatchlist, getVolatileStocks } from './analyzers/watchlist-tracker';
+import { aggregateNews, getHighImpactNews } from './analyzers/news-aggregator';
+import { generateReport } from './reporter';
 import { notifyReport, notifyAlert } from './notifier';
 
 /**
@@ -21,6 +21,12 @@ function generateAlerts(
   newsAnalyses: NewsAnalysis[]
 ): string[] {
   const alerts: string[] = [];
+  const buyOpportunities = watchlistAnalyses.filter(
+    item => item.signal === 'buy' && item.confidence >= 0.6
+  );
+  const holdingSellSignals = watchlistAnalyses.filter(
+    item => item.signal === 'sell' && item.isHolding
+  );
   
   // 检查极端板块轮动信号
   for (const analysis of sectorAnalyses) {
@@ -31,11 +37,15 @@ function generateAlerts(
     }
   }
   
-  // 检查高置信度交易信号
-  const highConfidence = getHighConfidenceSignals(watchlistAnalyses, 0.8);
-  for (const item of highConfidence) {
+  for (const item of buyOpportunities) {
     alerts.push(
       `${item.ticker}高置信度${item.signal.toUpperCase()}信号 (${(item.confidence * 100).toFixed(0)}%)`
+    );
+  }
+
+  for (const item of holdingSellSignals) {
+    alerts.push(
+      `${item.ticker}持仓${item.signal.toUpperCase()}提醒 (${(item.confidence * 100).toFixed(0)}%)`
     );
   }
   
@@ -59,11 +69,27 @@ function generateAlerts(
 }
 
 /**
- * 生成操作建议
+ * 生成操作建议（简化版）
  * @param report 市场情报报告
  */
 function generateRecommendations(report: MarketIntelligenceReport): string[] {
   const recommendations: string[] = [];
+  const buyOpportunities = report.watchlist
+    .filter(item => item.signal === 'buy' && item.confidence >= 0.6)
+    .sort((a, b) => b.confidence - a.confidence);
+  const holdingSellSignals = report.watchlist
+    .filter(item => item.signal === 'sell' && item.isHolding)
+    .sort((a, b) => b.confidence - a.confidence);
+
+  if (buyOpportunities.length > 0) {
+    const topBuy = buyOpportunities.slice(0, 3).map(item => item.ticker).join(', ');
+    recommendations.push(`优先关注买入机会: ${topBuy}`);
+  }
+
+  if (holdingSellSignals.length > 0) {
+    const riskNames = holdingSellSignals.slice(0, 3).map(item => item.ticker).join(', ');
+    recommendations.push(`持仓卖出提醒: ${riskNames}`);
+  }
   
   // 基于市场情绪
   if (report.marketOverview.overallSentiment === 'bullish') {
@@ -84,29 +110,6 @@ function generateRecommendations(report: MarketIntelligenceReport): string[] {
   if (strongSignals.length > 0) {
     const types = [...new Set(strongSignals.map(a => a.pair.type))];
     recommendations.push(`关注板块: ${types.join(', ')}`);
-  }
-  
-  // 基于高置信度信号
-  const buySignals = getHighConfidenceSignals(report.watchlist, 0.7)
-    .filter(a => a.signal === 'buy');
-  if (buySignals.length > 0) {
-    recommendations.push(
-      `潜在买入机会: ${buySignals.map(a => a.ticker).join(', ')}`
-    );
-  }
-  
-  const sellSignals = getHighConfidenceSignals(report.watchlist, 0.7)
-    .filter(a => a.signal === 'sell');
-  if (sellSignals.length > 0) {
-    recommendations.push(
-      `建议减仓/止盈: ${sellSignals.map(a => a.ticker).join(', ')}`
-    );
-  }
-  
-  // 基于新闻
-  const negativeNews = getNegativeNews(report.news);
-  if (negativeNews.length >= 3) {
-    recommendations.push('多个股票出现负面新闻，注意风险');
   }
   
   return recommendations;

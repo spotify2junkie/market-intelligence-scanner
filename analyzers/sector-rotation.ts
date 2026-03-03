@@ -82,29 +82,118 @@ function determineSignal(
 }
 
 /**
- * 生成分析推理说明
+ * 生成分析推理说明（通俗版，≤15字）
  * @param pair ETF对
  * @param zScore Z分数
  * @param signal 信号类型
+ * @param delta 趋势动量
+ * @param deltaTrend Delta趋势方向
  */
 function generateReasoning(
   pair: EtfPair,
   zScore: number,
-  signal: string
+  signal: string,
+  delta: number = 0,
+  deltaTrend: 'rising' | 'falling' | 'stable' = 'stable'
 ): string {
-  const direction = zScore > 0 ? '高于' : '低于';
-  const strength = Math.abs(zScore) > CONFIG.Z_SCORE_THRESHOLD ? '显著' : '轻微';
+  // 判断强度
+  const isStrong = Math.abs(zScore) > CONFIG.Z_SCORE_THRESHOLD;
+
+  // 判断趋势（结合 Delta 和趋势方向）
+  const isRising = deltaTrend === 'rising' && delta > 1;
+  const isFalling = deltaTrend === 'falling' && delta < -1;
+
+  // 根据不同类型生成通俗解读
+  let interpretation = '';
+
+  switch (pair.type) {
+    case 'risk_appetite': // QQQ/IWM - 科技vs小盘
+      if (zScore > 0) {
+        interpretation = isStrong ? '科技股强势领涨' : '科技股略强于小盘';
+        if (isRising) interpretation = '科技股持续走强';
+      } else {
+        interpretation = isStrong ? '小盘股相对便宜' : '小盘股有轮动机会';
+        if (isFalling) interpretation = '资金流向小盘股';
+      }
+      break;
+
+    case 'sector_rotation': // SMH/IGV - 半导体vs软件
+      if (zScore > 0) {
+        interpretation = isStrong ? '芯片股领涨' : '芯片略强于软件';
+        if (isRising) interpretation = '半导体持续强势';
+      } else {
+        interpretation = isStrong ? '软件股走强' : '软件股略占优';
+        if (isFalling) interpretation = '软件板块崛起';
+      }
+      break;
+
+    case 'cap_weighted': // SPY/RSP - 市值加权vs等权
+      if (zScore > 0) {
+        interpretation = isStrong ? '大盘股领涨' : '龙头股略强';
+        if (isRising) interpretation = '大盘股持续占优';
+      } else {
+        interpretation = isStrong ? '小盘股活跃' : '市场广度改善';
+        if (isFalling) interpretation = '小盘股开始发力';
+      }
+      break;
+
+    case 'risk_sentiment': // XLK/XLU - 进攻vs防守
+      if (zScore > 0) {
+        interpretation = isStrong ? '风险偏好高涨' : '市场偏进攻';
+        if (isRising) interpretation = '风险情绪升温';
+      } else {
+        interpretation = isStrong ? '避险情绪浓厚' : '市场偏防守';
+        if (isFalling) interpretation = '资金转向避险';
+      }
+      break;
+
+    case 'credit_risk': // HYG/IEF - 信贷风险
+      if (zScore > 0) {
+        interpretation = isStrong ? '风险容忍度高' : '信贷环境宽松';
+        if (isRising) interpretation = '风险资产受青睐';
+      } else {
+        interpretation = isStrong ? '信贷风险厌恶' : '市场偏谨慎';
+        if (isFalling) interpretation = '避险资产受宠';
+      }
+      break;
+
+    case 'value_growth': // IVE/IVW - 价值vs成长
+      if (zScore > 0) {
+        interpretation = isStrong ? '价值股占优' : '价值股略强';
+        if (isRising) interpretation = '价值风格持续';
+      } else {
+        interpretation = isStrong ? '成长股领涨' : '成长股略强';
+        if (isFalling) interpretation = '成长风格回归';
+      }
+      break;
+
+    default:
+      interpretation = `${pair.name}信号: ${signal}`;
+  }
+
+  return interpretation;
+}
+
+/**
+ * 计算线性回归斜率
+ * @param values 数值数组
+ * @returns 斜率
+ */
+function calculateSlope(values: number[]): number {
+  const n = values.length;
+  if (n < 2) return 0;
   
-  const interpretations: Record<string, string> = {
-    risk_appetite: `${pair.ticker1}相对${pair.ticker2}${strength}${direction}历史均值，反映风险偏好${zScore > 0 ? '上升' : '下降'}`,
-    sector_rotation: `${pair.ticker1}相对${pair.ticker2}${strength}${direction}，显示${zScore > 0 ? pair.ticker1 : pair.ticker2}板块走强`,
-    cap_weighted: `市值加权相对等权${strength}${direction}，大盘股${zScore > 0 ? '占优' : '落后'}`,
-    risk_sentiment: `进攻型相对防守型${strength}${direction}，风险情绪${zScore > 0 ? '积极' : '谨慎'}`,
-    credit_risk: `高收益债相对国债${strength}${direction}，信贷风险偏好${zScore > 0 ? '上升' : '下降'}`,
-    value_growth: `价值股相对成长股${strength}${direction}，${zScore > 0 ? '价值' : '成长'}风格占优`,
-  };
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
   
-  return interpretations[pair.type] || `${pair.name}信号: ${signal}`;
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += values[i];
+    sumXY += i * values[i];
+    sumX2 += i * i;
+  }
+  
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+  return slope;
 }
 
 /**
@@ -116,10 +205,12 @@ async function analyzeEtfPair(pair: EtfPair): Promise<EtfPairAnalysis> {
   console.log(`[SectorRotation] Analyzing pair: ${pair.ticker1}/${pair.ticker2}`);
   
   try {
-    // 获取两只ETF的表现数据
-    const [perf1, perf2] = await Promise.all([
+    // 获取两只ETF的表现数据和历史数据
+    const [perf1, perf2, chart1, chart2] = await Promise.all([
       investXClient.getPerformance(pair.ticker1),
-      investXClient.getPerformance(pair.ticker2)
+      investXClient.getPerformance(pair.ticker2),
+      investXClient.getChartData(pair.ticker1, '1d'),
+      investXClient.getChartData(pair.ticker2, '1d')
     ]);
     
     // 计算当前比率
@@ -129,13 +220,75 @@ async function analyzeEtfPair(pair: EtfPair): Promise<EtfPairAnalysis> {
     const previousRatio = perf1.previousClose / perf2.previousClose;
     const ratioChange = (currentRatio - previousRatio) / previousRatio * 100;
     
-    // 注意：这里我们简化了Z-Score计算
-    // 实际应用中需要历史数据来计算MA20和标准差
-    // 这里使用日变化作为近似
-    const mockHistoricalRatios = [currentRatio]; // 实际需要20天数据
+    // 计算历史比率序列（用于 Z-Score 和 Delta）
+    const historicalRatios: number[] = [];
+    const minLength = Math.min(chart1.bars.length, chart2.bars.length);
     
-    // 简化版Z-Score：使用比率变化百分比
-    const zScore = ratioChange / 2; // 假设标准差约为2%
+    // 取最近 20 天的数据
+    const lookbackDays = Math.min(20, minLength);
+    for (let i = minLength - lookbackDays; i < minLength; i++) {
+      const bar1 = chart1.bars[i] as any;
+      const bar2 = chart2.bars[i] as any;
+      
+      // 兼容两种字段名：c/close
+      const c1 = bar1.c !== undefined ? bar1.c : bar1.close;
+      const c2 = bar2.c !== undefined ? bar2.c : bar2.close;
+      
+      if (c1 && c2 && c2 > 0) {
+        const ratio = c1 / c2;
+        historicalRatios.push(ratio);
+      }
+    }
+    
+    // 如果历史数据不足，添加当前比率
+    if (historicalRatios.length < 5) {
+      historicalRatios.push(currentRatio);
+    }
+    
+    // 计算 Z-Score
+    let zScore = 0;
+    if (historicalRatios.length >= 5) {
+      const mean = calculateSMA(historicalRatios, historicalRatios.length);
+      const stdDev = calculateStdDev(historicalRatios, historicalRatios.length);
+      
+      if (stdDev > 0) {
+        zScore = (currentRatio - mean) / stdDev;
+      }
+    }
+    
+    // 计算 Delta（趋势动量）
+    let delta = 0;
+    let deltaTrend: 'rising' | 'falling' | 'stable' = 'stable';
+    
+    if (historicalRatios.length >= 5) {
+      // 方法1: 5日均值偏离
+      const ma5 = calculateSMA(historicalRatios, Math.min(5, historicalRatios.length));
+      
+      // 避免除以零
+      if (ma5 > 0) {
+        delta = ((currentRatio - ma5) / ma5) * 100;
+      } else {
+        delta = 0;
+      }
+      
+      // 方法2: 计算20日斜率（如果有足够数据）
+      if (historicalRatios.length >= 10) {
+        const slope = calculateSlope(historicalRatios);
+        // 如果斜率显著，使用斜率作为补充
+        if (Math.abs(slope) > 0.0001) {
+          delta = delta * 0.5 + slope * 100 * 0.5;  // 综合两个指标
+        }
+      }
+      
+      // 判断趋势方向
+      if (delta > 0.5) deltaTrend = 'rising';
+      else if (delta < -0.5) deltaTrend = 'falling';
+      else deltaTrend = 'stable';
+    } else {
+      // 如果历史数据不足，使用日变化作为 Delta
+      delta = ratioChange;
+      deltaTrend = ratioChange > 0.5 ? 'rising' : ratioChange < -0.5 ? 'falling' : 'stable';
+    }
     
     // 计算ATR调整的相对强度
     const return1 = perf1.todayChangePercent;
@@ -144,15 +297,17 @@ async function analyzeEtfPair(pair: EtfPair): Promise<EtfPairAnalysis> {
     const atr2 = estimateATR(perf2);
     const atrAdjustedDiff = (return1 - return2) / (atr1 + atr2);
     
-    // 判断信号
+    // 判断信号（结合 Z-Score 和 Delta）
     const signal = determineSignal(zScore, atrAdjustedDiff);
     
-    // 生成推理
-    const reasoning = generateReasoning(pair, zScore, signal);
+    // 生成推理（结合 Delta）
+    const reasoning = generateReasoning(pair, zScore, signal, delta, deltaTrend);
     
     console.log(`[SectorRotation] Pair ${pair.ticker1}/${pair.ticker2} analyzed:`, {
       ratio: currentRatio.toFixed(4),
       zScore: zScore.toFixed(2),
+      delta: delta.toFixed(2),
+      deltaTrend,
       signal
     });
     
@@ -166,6 +321,8 @@ async function analyzeEtfPair(pair: EtfPair): Promise<EtfPairAnalysis> {
       ratio: currentRatio,
       ratioChange,
       zScore,
+      delta,
+      deltaTrend,
       atrAdjustedDiff,
       signal,
       reasoning,
@@ -188,6 +345,8 @@ async function analyzeEtfPair(pair: EtfPair): Promise<EtfPairAnalysis> {
       ratio: 0,
       ratioChange: 0,
       zScore: 0,
+      delta: 0,
+      deltaTrend: 'stable',
       atrAdjustedDiff: 0,
       signal: 'neutral',
       reasoning: `数据获取失败: ${error}`,

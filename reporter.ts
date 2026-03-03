@@ -20,6 +20,10 @@ function formatPrice(price: number | undefined): string {
   return '$' + price.toFixed(2);
 }
 
+function escapeTableCell(text: string): string {
+  return text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
 /**
  * 格式化百分比
  */
@@ -50,7 +54,7 @@ function formatRSI(rsi: number | undefined): string {
  * 格式化 MACD
  */
 function formatMACD(macd: any | undefined): string {
-  if (!macd || macd.value === undefined) {
+  if (!macd || macd.value === undefined || macd.histogram === undefined || isNaN(macd.histogram)) {
     return 'N/A';
   }
   
@@ -59,32 +63,143 @@ function formatMACD(macd: any | undefined): string {
 }
 
 /**
+ * 格式化 Z-Score
+ * @param zScore Z分数
+ */
+function formatZScore(zScore: number | undefined): string {
+  if (zScore === undefined || zScore === null || isNaN(zScore)) {
+    return 'N/A';
+  }
+  
+  const absZ = Math.abs(zScore);
+  const sign = zScore >= 0 ? '+' : '';
+  
+  // 根据 |Z| 值添加视觉标记
+  if (absZ > 2) {
+    return `🚨${sign}${zScore.toFixed(2)}`;  // 极端异常
+  } else if (absZ > 1) {
+    return `⚠️${sign}${zScore.toFixed(2)}`;  // 引起关注
+  } else {
+    return `${sign}${zScore.toFixed(2)}`;  // 正常
+  }
+}
+
+/**
+ * 格式化 Delta（趋势动量）
+ * @param delta Delta值
+ * @param trend 趋势方向
+ */
+function formatDelta(delta: number | undefined, trend: 'rising' | 'falling' | 'stable' | undefined): string {
+  if (delta === undefined || delta === null || isNaN(delta)) {
+    return 'N/A';
+  }
+  
+  const sign = delta >= 0 ? '+' : '';
+  let trendIcon = '➡️';
+  
+  if (trend === 'rising') trendIcon = '📈';
+  else if (trend === 'falling') trendIcon = '📉';
+  
+  return `${trendIcon}${sign}${delta.toFixed(2)}%`;
+}
+
+/**
  * 生成大盘表格（精简版）
  */
 function generateSectorRotationSection(analyses: EtfPairAnalysis[]): string {
   let section = '## 📊 大盘指标\n\n';
-  section += '| 指标 | 比率 | 涨跌 | 信号 | 解读 |\n';
-  section += '|------|------|------|------|------|\n';
+  section += '| 指标 | 比率 | Z-Score | Delta | 信号 | 解读 |\n';
+  section += '|------|------|---------|-------|------|------|\n';
 
   for (const analysis of analyses) {
     const ratio = analysis.ratio ? analysis.ratio.toFixed(3) : 'N/A';
-    const change = formatPercent(analysis.ratioChange);
+    const zScore = formatZScore(analysis.zScore);
+    const delta = formatDelta(analysis.delta, analysis.deltaTrend);
 
     // 简化信号显示
     let signalIcon = '➡️';
     if (analysis.signal.includes('bullish')) signalIcon = '📈';
     else if (analysis.signal.includes('bearish')) signalIcon = '📉';
 
-    // 解读限制在20字以内
-    let shortReasoning = analysis.reasoning.split('，')[0].split('。')[0];
-    if (shortReasoning.length > 20) {
-      shortReasoning = shortReasoning.substring(0, 18) + '...';
+    // 解读已经控制在15字以内，直接使用
+    let shortReasoning = analysis.reasoning;
+    if (shortReasoning.length > 15) {
+      shortReasoning = shortReasoning.substring(0, 13) + '...';
     }
 
-    section += `| ${analysis.pair.name} | ${ratio} | ${change} | ${signalIcon} | ${shortReasoning} |\n`;
+    section += `| ${analysis.pair.name} | ${ratio} | ${zScore} | ${delta} | ${signalIcon} | ${escapeTableCell(shortReasoning)} |\n`;
   }
 
   return section;
+}
+
+/**
+ * 生成买入机会表格
+ */
+function generateBuyOpportunitiesSection(analyses: WatchlistItemAnalysis[]): string {
+  const buySignals = analyses
+    .filter(a => a.signal === 'buy' && a.confidence >= 0.6)
+    .sort((a, b) => b.confidence - a.confidence);
+  
+  if (buySignals.length === 0) {
+    return '## 🎯 买入机会\n\n_暂无高置信度买入信号_\n\n';
+  }
+  
+  let section = '## 🎯 买入机会\n\n';
+  section += '| 股票 | 信号 | 置信度 | 入场价 | 止损 | 止盈 | 核心理由 |\n';
+  section += '|------|------|--------|--------|------|------|----------|\n';
+  
+  for (const item of buySignals) {
+    const ticker = item.ticker;
+    const consensusSignal = item.aiAnalysis?.consensus?.signal || item.signal;
+    const confidence = `${((item.aiAnalysis?.consensus?.confidence ?? item.confidence) * 100).toFixed(0)}%`;
+    const entry = formatPrice(item.aiAnalysis?.entry?.price ?? item.performance?.currentPrice);
+    const stopLoss = formatPrice(item.aiAnalysis?.stopLoss);
+    const takeProfit = (item.aiAnalysis?.takeProfit && item.aiAnalysis.takeProfit.length > 0) 
+      ? formatPrice(item.aiAnalysis.takeProfit[0]) 
+      : 'N/A';
+    const rawReasoning = item.aiAnalysis?.consensus?.reasoning || item.keyEvents[0] || '共识信号';
+    const reasoning = escapeTableCell(rawReasoning.length > 40 ? `${rawReasoning.slice(0, 37)}...` : rawReasoning);
+    
+    section += `| **${ticker}** | ${consensusSignal.toUpperCase()} | ${confidence} | ${entry} | ${stopLoss} | ${takeProfit} | ${reasoning} |\n`;
+  }
+  
+  return section + '\n';
+}
+
+/**
+ * 生成持仓提醒表格（只对 isHolding=true 的股票）
+ */
+function generateHoldingAlertsSection(analyses: WatchlistItemAnalysis[]): string {
+  const holdingSellSignals = analyses
+    .filter(a => a.isHolding === true && a.signal === 'sell')
+    .sort((a, b) => b.confidence - a.confidence);
+  
+  if (holdingSellSignals.length === 0) {
+    return '## ⚠️ 持仓提醒\n\n_暂无持仓卖出信号_\n\n';
+  }
+  
+  let section = '## ⚠️ 持仓提醒\n\n';
+  section += '| 股票 | 信号 | 置信度 | 持仓成本 | 现价 | 建议操作 |\n';
+  section += '|------|------|--------|----------|------|----------|\n';
+  
+  for (const item of holdingSellSignals) {
+    const ticker = item.ticker;
+    const signal = item.signal.toUpperCase();
+    const confidence = `${(item.confidence * 100).toFixed(0)}%`;
+    const entryPrice = formatPrice(item.entryPrice);
+    const currentPrice = formatPrice(item.performance?.currentPrice);
+    const pnlHint =
+      item.entryPrice && item.performance?.currentPrice
+        ? item.performance.currentPrice >= item.entryPrice
+          ? '🔴 建议止盈/减仓'
+          : '🟠 建议减仓并设止损'
+        : '🔴 建议止盈/减仓';
+    
+    section += `| **${ticker}** | ${signal} | ${confidence} | ${entryPrice} | ${currentPrice} | ${pnlHint} |\n`;
+  }
+  
+  return section + '\n';
 }
 
 /**
@@ -252,18 +367,29 @@ export function generateReport(report: MarketIntelligenceReport): string {
 
   markdown += `情绪:${sentimentEmoji} | 风险:${riskEmoji}\n\n---\n\n`;
 
-  // 1. 大盘表格
+  // 1. 买入机会（新增）
+  markdown += generateBuyOpportunitiesSection(report.watchlist);
+  markdown += '---\n\n';
+
+  // 2. 持仓提醒（新增，只对持仓股票）
+  const holdingSection = generateHoldingAlertsSection(report.watchlist);
+  if (holdingSection) {
+    markdown += holdingSection;
+    markdown += '---\n\n';
+  }
+
+  // 3. 大盘表格
   markdown += generateSectorRotationSection(report.marketOverview.sectorRotation);
   markdown += '\n---\n\n';
 
-  // 2. 个股表格
+  // 4. 个股表格
   markdown += generateWatchlistSection(report.watchlist, marketStatus);
   markdown += '\n---\n\n';
 
-  // 3. 新闻摘要
+  // 5. 新闻摘要
   markdown += generateNewsSection(report.news);
 
-  // 4. 警报和建议（合并，最多各3条）
+  // 6. 警报和建议（合并，最多各3条）
   if (report.alerts.length > 0 || report.recommendations.length > 0) {
     markdown += '\n---\n\n';
 
@@ -295,8 +421,8 @@ export function generateSummary(report: MarketIntelligenceReport): string {
   summary += `市场情绪: ${sentimentEmoji} ${report.marketOverview.overallSentiment.toUpperCase()}\n\n`;
   
   // 个股信号
-  const buySignals = report.watchlist.filter(w => w.signal === 'buy');
-  const sellSignals = report.watchlist.filter(w => w.signal === 'sell');
+  const buySignals = report.watchlist.filter(w => w.signal === 'buy' && w.confidence >= 0.6);
+  const sellSignals = report.watchlist.filter(w => w.signal === 'sell' && w.isHolding);
   
   if (buySignals.length > 0) {
     summary += `🟢 买入信号: ${buySignals.map(w => w.ticker).join(', ')}\n`;

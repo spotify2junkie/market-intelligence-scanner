@@ -5,6 +5,7 @@
   "main": "dist/scanner.js",
   "scripts": {
     "build": "tsc",
+    "test": "node --test -r ts-node/register tests/**/*.test.ts",
     "start": "node dist/scanner.js",
     "dev": "ts-node scanner.ts",
     "scan": "npm run build && npm start",

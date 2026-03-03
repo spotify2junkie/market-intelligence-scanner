@@ -39,7 +39,23 @@ export interface InvestXMultiAgentAnalysis {
     confidence: number;
     reasoning: string;
   }>;
+  entry?: {
+    price: number;
+    range?: [number, number];
+  };
+  stopLoss?: number;
+  takeProfit?: number[];
   timestamp: string;
+}
+
+export interface InvestXWatchlistItem {
+  ticker: string;
+  isHolding: boolean;
+  entryPrice?: number;
+  positionSize?: number;
+  currentPrice?: number;
+  lastSignal?: 'buy' | 'sell' | 'hold';
+  confidence?: number;
 }
 
 // Massive API响应类型
@@ -70,6 +86,8 @@ export interface EtfPairAnalysis {
   ratio: number;
   ratioChange: number;
   zScore: number;
+  delta: number;  // 趋势动量：5日均值偏离或20日斜率
+  deltaTrend: 'rising' | 'falling' | 'stable';  // Delta趋势方向
   atrAdjustedDiff: number;
   signal: 'strong_bullish' | 'bullish' | 'neutral' | 'bearish' | 'strong_bearish';
   reasoning: string;
@@ -107,6 +125,9 @@ export interface WatchlistItemAnalysis {
   signal: 'buy' | 'sell' | 'hold';
   confidence: number;
   keyEvents: string[];
+  isHolding: boolean;  // 是否持仓
+  entryPrice?: number;  // 持仓成本
+  positionSize?: number; // 持仓数量
 }
 
 export interface NewsAnalysis {

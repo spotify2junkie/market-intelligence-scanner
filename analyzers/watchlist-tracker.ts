@@ -3,7 +3,11 @@
 
 import { investXClient } from '../fetchers/investx-client';
 import { CONFIG } from '../config';
-import { WatchlistItemAnalysis, InvestXPerformance, InvestXMultiAgentAnalysis } from '../fetchers/types';
+import {
+  WatchlistItemAnalysis,
+  InvestXPerformance,
+  InvestXMultiAgentAnalysis
+} from '../fetchers/types';
 
 /**
  * 提取关键事件
@@ -80,9 +84,13 @@ function determineFinalSignal(
 /**
  * 分析单只股票
  * @param ticker 股票代码
+ * @param holdingInfo 持仓信息（可选）
  * @returns 分析结果
  */
-async function analyzeWatchlistItem(ticker: string): Promise<WatchlistItemAnalysis> {
+async function analyzeWatchlistItem(
+  ticker: string,
+  holdingInfo?: { isHolding: boolean; entryPrice?: number; positionSize?: number }
+): Promise<WatchlistItemAnalysis> {
   console.log(`[WatchlistTracker] Analyzing ${ticker}...`);
 
   try {
@@ -114,7 +122,8 @@ async function analyzeWatchlistItem(ticker: string): Promise<WatchlistItemAnalys
       change: performance.todayChangePercent.toFixed(2) + '%',
       signal,
       confidence: confidence.toFixed(2),
-      rsi: technicals?.rsi?.toFixed(2)
+      rsi: technicals?.rsi?.toFixed(2),
+      isHolding: holdingInfo?.isHolding || false
     });
 
     return {
@@ -125,7 +134,10 @@ async function analyzeWatchlistItem(ticker: string): Promise<WatchlistItemAnalys
       chartData,
       signal,
       confidence,
-      keyEvents
+      keyEvents,
+      isHolding: holdingInfo?.isHolding || false,
+      entryPrice: holdingInfo?.entryPrice,
+      positionSize: holdingInfo?.positionSize
     };
   } catch (error) {
     console.error(`[WatchlistTracker] Failed to analyze ${ticker}:`, error);
@@ -142,7 +154,10 @@ async function analyzeWatchlistItem(ticker: string): Promise<WatchlistItemAnalys
       },
       signal: 'hold',
       confidence: 0,
-      keyEvents: [`数据获取失败: ${error}`]
+      keyEvents: [`数据获取失败: ${error}`],
+      isHolding: holdingInfo?.isHolding ?? false,
+      entryPrice: holdingInfo?.entryPrice,
+      positionSize: holdingInfo?.positionSize
     };
   }
 }
@@ -153,9 +168,31 @@ async function analyzeWatchlistItem(ticker: string): Promise<WatchlistItemAnalys
  */
 export async function analyzeWatchlist(): Promise<WatchlistItemAnalysis[]> {
   console.log('[WatchlistTracker] Starting watchlist analysis...');
+
+  // 先获取 watchlist（包含 isHolding 信息）
+  let watchlistData: Awaited<ReturnType<typeof investXClient.getWatchlist>> = [];
+  try {
+    watchlistData = await investXClient.getWatchlist();
+  } catch (error) {
+    console.warn('[WatchlistTracker] Watchlist fetch failed, falling back to default non-holding mode:', error);
+  }
+
+  const holdingMap = new Map<string, { isHolding: boolean; entryPrice?: number; positionSize?: number }>();
   
+  for (const item of watchlistData) {
+    holdingMap.set(item.ticker, {
+      isHolding: item.isHolding,
+      entryPrice: item.entryPrice,
+      positionSize: item.positionSize
+    });
+  }
+  
+  // 并发分析所有股票
   const analyses = await Promise.all(
-    CONFIG.WATCHLIST.map(ticker => analyzeWatchlistItem(ticker))
+    CONFIG.WATCHLIST.map(ticker => {
+      const holdingInfo = holdingMap.get(ticker.toUpperCase());
+      return analyzeWatchlistItem(ticker, holdingInfo);
+    })
   );
   
   // 统计信号分布

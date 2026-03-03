@@ -7,7 +7,8 @@ import {
   InvestXPerformance,
   InvestXChartData,
   InvestXMultiAgentAnalysis,
-  InvestXTechnicals
+  InvestXTechnicals,
+  InvestXWatchlistItem
 } from './types';
 
 /**
@@ -273,13 +274,39 @@ export class InvestXClient {
       if (!data.ticker) data.ticker = ticker;
       if (!data.timestamp) data.timestamp = new Date().toISOString();
 
-      // 确保 consensus 存在
+      const normalizeSignal = (value: unknown): 'buy' | 'sell' | 'hold' => {
+        if (typeof value !== 'string') {
+          return 'hold';
+        }
+        const normalized = value.toLowerCase();
+        return normalized === 'buy' || normalized === 'sell' || normalized === 'hold'
+          ? normalized
+          : 'hold';
+      };
+
+      const normalizeConfidence = (value: unknown): number => {
+        const numeric = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(numeric)) {
+          return 0.5;
+        }
+        if (numeric > 1 && numeric <= 100) {
+          return Math.max(0, Math.min(1, numeric / 100));
+        }
+        return Math.max(0, Math.min(1, numeric));
+      };
+
       if (!data.consensus) {
         data.consensus = {
           signal: 'hold',
           confidence: 0.5,
           reasoning: '无分析数据'
         };
+      } else {
+        data.consensus.signal = normalizeSignal(data.consensus.signal);
+        data.consensus.confidence = normalizeConfidence(data.consensus.confidence);
+        if (typeof data.consensus.reasoning !== 'string') {
+          data.consensus.reasoning = '无分析数据';
+        }
       }
 
       // 确保 agents 数组存在
@@ -410,6 +437,77 @@ export class InvestXClient {
     await Promise.all(promises);
     
     return results;
+  }
+
+  /**
+   * 获取 Watchlist（包含 isHolding 信息）
+   * @returns Watchlist 数据
+   */
+  async getWatchlist(): Promise<InvestXWatchlistItem[]> {
+    return withRetry(async () => {
+      const url = `${this.baseUrl}/api/watchlist`;
+      
+      console.log(`[InvestX] Fetching watchlist`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch watchlist: ${response.status} ${response.statusText}`
+        );
+      }
+      
+      const payload = await response.json() as {
+        items?: unknown[];
+        data?: { items?: unknown[]; watchlist?: unknown[] } | unknown[];
+        watchlist?: unknown[];
+      };
+
+      const rawItems = Array.isArray(payload.items)
+        ? payload.items
+        : Array.isArray(payload.watchlist)
+          ? payload.watchlist
+          : Array.isArray(payload.data)
+            ? payload.data
+            : payload.data && typeof payload.data === 'object' && 'items' in payload.data && Array.isArray(payload.data.items)
+              ? payload.data.items
+              : payload.data && typeof payload.data === 'object' && 'watchlist' in payload.data && Array.isArray(payload.data.watchlist)
+                ? payload.data.watchlist
+                : [];
+
+      return rawItems
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => {
+          const ticker = typeof item.ticker === 'string' ? item.ticker.toUpperCase() : '';
+          const signal = typeof item.lastSignal === 'string' ? item.lastSignal.toLowerCase() : item.lastSignal;
+          const confidence = typeof item.confidence === 'number' ? item.confidence : Number(item.confidence);
+          const entryPrice = typeof item.entryPrice === 'number' ? item.entryPrice : Number(item.entryPrice);
+          const positionSize = typeof item.positionSize === 'number' ? item.positionSize : Number(item.positionSize);
+          const currentPrice = typeof item.currentPrice === 'number' ? item.currentPrice : Number(item.currentPrice);
+          const isHoldingRaw = item.isHolding;
+          const isHolding =
+            isHoldingRaw === true ||
+            isHoldingRaw === 1 ||
+            isHoldingRaw === '1' ||
+            (typeof isHoldingRaw === 'string' && isHoldingRaw.toLowerCase() === 'true');
+
+          return {
+            ticker,
+            isHolding,
+            entryPrice: Number.isFinite(entryPrice) ? entryPrice : undefined,
+            positionSize: Number.isFinite(positionSize) ? positionSize : undefined,
+            currentPrice: Number.isFinite(currentPrice) ? currentPrice : undefined,
+            lastSignal: signal === 'buy' || signal === 'sell' || signal === 'hold' ? signal : undefined,
+            confidence: Number.isFinite(confidence) ? confidence : undefined
+          } satisfies InvestXWatchlistItem;
+        })
+        .filter(item => item.ticker.length > 0);
+    });
   }
 }
 
