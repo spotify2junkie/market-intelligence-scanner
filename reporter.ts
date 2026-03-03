@@ -5,7 +5,8 @@ import {
   MarketIntelligenceReport,
   EtfPairAnalysis,
   WatchlistItemAnalysis,
-  NewsAnalysis
+  NewsAnalysis,
+  IntradayRotationItem
 } from './fetchers/types';
 import { calculateOverallSentiment, calculateRiskLevel } from './analyzers/sector-rotation';
 import { generateNewsSummary } from './analyzers/news-aggregator';
@@ -33,6 +34,38 @@ function formatPercent(percent: number | undefined): string {
   }
   const sign = percent >= 0 ? '+' : '';
   return `${sign}${percent.toFixed(2)}%`;
+}
+
+function formatFlowSignal(signal: IntradayRotationItem['signal']): string {
+  if (signal === 'inflow') {
+    return '资金流入';
+  }
+  if (signal === 'outflow') {
+    return '资金流出';
+  }
+  return '中性';
+}
+
+function generateIntradayRotationSection(items: IntradayRotationItem[]): string {
+  if (items.length === 0) {
+    return '## 🔄 盘中实时轮动\n\n_暂无盘中轮动数据_\n\n';
+  }
+
+  const sorted = [...items].sort((a, b) => b.relativeStrengthVsSpy - a.relativeStrengthVsSpy);
+
+  let section = '## 🔄 盘中实时轮动\n\n';
+  section += '| 板块 | 开盘至今 | vs SPY | VWAP | 信号 |\n';
+  section += '|------|----------|--------|------|------|\n';
+
+  for (const item of sorted) {
+    const vwapStatus = item.vwapDeviationPercent >= 0
+      ? `高于(${formatPercent(item.vwapDeviationPercent)})`
+      : `低于(${formatPercent(item.vwapDeviationPercent)})`;
+
+    section += `| ${item.ticker} ${item.sector} | ${formatPercent(item.fromOpenPercent)} | ${formatPercent(item.relativeStrengthVsSpy)} | ${vwapStatus} | ${formatFlowSignal(item.signal)} |\n`;
+  }
+
+  return section + '\n';
 }
 
 /**
@@ -379,17 +412,19 @@ export function generateReport(report: MarketIntelligenceReport): string {
   }
 
   // 3. 大盘表格
+  if (report.intradayRotation && report.intradayRotation.length > 0) {
+    markdown += generateIntradayRotationSection(report.intradayRotation);
+    markdown += '---\n\n';
+  }
+
   markdown += generateSectorRotationSection(report.marketOverview.sectorRotation);
   markdown += '\n---\n\n';
 
-  // 4. 个股表格
   markdown += generateWatchlistSection(report.watchlist, marketStatus);
   markdown += '\n---\n\n';
 
-  // 5. 新闻摘要
   markdown += generateNewsSection(report.news);
 
-  // 6. 警报和建议（合并，最多各3条）
   if (report.alerts.length > 0 || report.recommendations.length > 0) {
     markdown += '\n---\n\n';
 

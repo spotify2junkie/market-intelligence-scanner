@@ -138,6 +138,16 @@ export interface NewsAnalysis {
   impactLevel: 'high' | 'medium' | 'low';
 }
 
+export interface IntradayRotationItem {
+  ticker: string;
+  sector: string;
+  fromOpenPercent: number;
+  relativeStrengthVsSpy: number;
+  vwap: number;
+  vwapDeviationPercent: number;
+  signal: 'inflow' | 'outflow' | 'neutral';
+}
+
 // 综合报告类型
 export interface MarketIntelligenceReport {
   timestamp: string;
@@ -146,6 +156,7 @@ export interface MarketIntelligenceReport {
     overallSentiment: 'bullish' | 'bearish' | 'neutral';
     riskLevel: 'high' | 'medium' | 'low';
   };
+  intradayRotation?: IntradayRotationItem[];
   watchlist: WatchlistItemAnalysis[];
   news: NewsAnalysis[];
   alerts: string[];

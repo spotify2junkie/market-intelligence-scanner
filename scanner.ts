@@ -6,8 +6,27 @@ import { MarketIntelligenceReport, WatchlistItemAnalysis, NewsAnalysis } from '.
 import { analyzeSectorRotation, calculateOverallSentiment, calculateRiskLevel } from './analyzers/sector-rotation';
 import { analyzeWatchlist, getVolatileStocks } from './analyzers/watchlist-tracker';
 import { aggregateNews, getHighImpactNews } from './analyzers/news-aggregator';
+import { getIntradayRotation } from './analyzers/intraday-rotation';
 import { generateReport } from './reporter';
 import { notifyReport, notifyAlert } from './notifier';
+
+function isUsMarketOpen(): boolean {
+  const now = new Date();
+  const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = etNow.getDay();
+  const hour = etNow.getHours();
+  const minute = etNow.getMinutes();
+
+  if (day === 0 || day === 6) {
+    return false;
+  }
+
+  if (hour > 9 && hour < 16) {
+    return true;
+  }
+
+  return hour === 9 && minute >= 30;
+}
 
 /**
  * 生成警报列表
@@ -137,6 +156,10 @@ export async function scanMarket(): Promise<MarketIntelligenceReport> {
       // Watchlist分析（动态从 API 获取 ticker 列表）
       analyzeWatchlist(),
     ]);
+
+    const intradayRotation = isUsMarketOpen()
+      ? await getIntradayRotation()
+      : [];
     
     // 新闻分析（使用动态的 watchlist ticker 列表）
     const newsTickers = watchlistAnalyses.map(a => a.ticker);
@@ -159,6 +182,7 @@ export async function scanMarket(): Promise<MarketIntelligenceReport> {
         overallSentiment,
         riskLevel
       },
+      intradayRotation,
       watchlist: watchlistAnalyses,
       news: newsAnalyses,
       alerts: [],
