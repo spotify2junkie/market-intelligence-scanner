@@ -157,9 +157,8 @@ export async function scanMarket(): Promise<MarketIntelligenceReport> {
       analyzeWatchlist(),
     ]);
 
-    const intradayRotation = isUsMarketOpen()
-      ? await getIntradayRotation()
-      : [];
+    // 盘中轮动分析（盘前用 preMarket，盘中用 open）
+    const intradayRotation = await getIntradayRotation();
     
     // 新闻分析（使用动态的 watchlist ticker 列表）
     const newsTickers = watchlistAnalyses.map(a => a.ticker);
