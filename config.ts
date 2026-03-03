@@ -50,6 +50,8 @@ export const CONFIG = {
   // Retry配置
   MAX_RETRIES: 3,
   RETRY_DELAY_MS: 1000,
+
+  REQUEST_TIMEOUT_MS: 8000,
 };
 
 export type EtfPair = typeof CONFIG.ETF_PAIRS[0];

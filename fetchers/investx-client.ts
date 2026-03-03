@@ -1,7 +1,9 @@
 // fetchers/investx-client.ts - InvestX API客户端
 // 负责与InvestX后端API通信，获取股票数据和AI分析
 
-import fetch from 'node-fetch';
+import fetch, { RequestInit } from 'node-fetch';
+import http from 'http';
+import https from 'https';
 import { CONFIG } from '../config';
 import {
   InvestXPerformance,
@@ -19,6 +21,79 @@ const delay = (ms: number): Promise<void> => {
   return new Promise(resolve => setTimeout(resolve, ms));
 };
 
+class InvestXHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'InvestXHttpError';
+    this.status = status;
+  }
+}
+
+const httpAgent = new http.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ keepAlive: true });
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+
+  if (!('code' in error)) {
+    return undefined;
+  }
+
+  const value = error.code;
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof InvestXHttpError) {
+    return isRetryableStatus(error.status);
+  }
+
+  const code = getErrorCode(error);
+  if (
+    code === 'ECONNRESET'
+    || code === 'ECONNREFUSED'
+    || code === 'ENOTFOUND'
+    || code === 'EAI_AGAIN'
+    || code === 'ETIMEDOUT'
+  ) {
+    return true;
+  }
+
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('network timeout')
+    || message.includes('request-timeout')
+    || message.includes('socket hang up')
+    || message.includes('connection error')
+    || message.includes('network request failed');
+}
+
+function buildGetRequestOptions(): RequestInit {
+  return {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+    timeout: CONFIG.REQUEST_TIMEOUT_MS,
+    agent: parsedUrl => (parsedUrl.protocol === 'http:' ? httpAgent : httpsAgent),
+  };
+}
+
 /**
  * Retry装饰器
  * 实现指数退避的retry逻辑
@@ -31,13 +106,17 @@ async function withRetry<T>(
   maxRetries: number = CONFIG.MAX_RETRIES,
   baseDelayMs: number = CONFIG.RETRY_DELAY_MS
 ): Promise<T> {
-  let lastError: Error | undefined;
+  let lastError: unknown;
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await fn();
     } catch (error) {
-      lastError = error as Error;
+      lastError = error;
+
+      if (!isRetryableError(error)) {
+        throw error;
+      }
       
       // 如果不是最后一次尝试，则等待
       if (attempt < maxRetries - 1) {
@@ -45,7 +124,7 @@ async function withRetry<T>(
         const delayMs = baseDelayMs * Math.pow(2, attempt);
         console.warn(
           `[InvestX] Retry attempt ${attempt + 1}/${maxRetries} after ${delayMs}ms`,
-          { error: lastError.message }
+          { error: getErrorMessage(lastError) }
         );
         await delay(delayMs);
       }
@@ -54,7 +133,7 @@ async function withRetry<T>(
   
   // 所有重试都失败，抛出最后的错误
   throw new Error(
-    `InvestX API failed after ${maxRetries} retries: ${lastError?.message}`
+    `InvestX API failed after ${maxRetries} retries: ${getErrorMessage(lastError)}`
   );
 }
 
@@ -80,16 +159,12 @@ export class InvestXClient {
       
       console.log(`[InvestX] Fetching performance for ${ticker}`);
       
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+      const response = await fetch(url, buildGetRequestOptions());
       
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch performance for ${ticker}: ${response.status} ${response.statusText}`
+        throw new InvestXHttpError(
+          `Failed to fetch performance for ${ticker}: ${response.status} ${response.statusText}`,
+          response.status
         );
       }
       
@@ -153,16 +228,12 @@ export class InvestXClient {
 
       console.log(`[InvestX] Fetching chart data for ${ticker} (${timeframe})`);
 
-      const response = await fetch(`${url}?${params}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+      const response = await fetch(`${url}?${params}`, buildGetRequestOptions());
 
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch chart data for ${ticker}: ${response.status} ${response.statusText}`
+        throw new InvestXHttpError(
+          `Failed to fetch chart data for ${ticker}: ${response.status} ${response.statusText}`,
+          response.status
         );
       }
 
@@ -229,12 +300,7 @@ export class InvestXClient {
 
       console.log(`[InvestX] Fetching multi-agent analysis for ${ticker}`);
 
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+      const response = await fetch(url, buildGetRequestOptions());
 
       if (!response.ok) {
         // 如果是 404，返回默认的中性分析结果，而不是抛出错误
@@ -252,8 +318,9 @@ export class InvestXClient {
           };
         }
 
-        throw new Error(
-          `Failed to fetch multi-agent analysis for ${ticker}: ${response.status} ${response.statusText}`
+        throw new InvestXHttpError(
+          `Failed to fetch multi-agent analysis for ${ticker}: ${response.status} ${response.statusText}`,
+          response.status
         );
       }
 
@@ -339,16 +406,12 @@ export class InvestXClient {
 
       console.log(`[InvestX] Fetching technicals for ${ticker} (${timeframe})`);
 
-      const response = await fetch(`${url}?${params}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+      const response = await fetch(`${url}?${params}`, buildGetRequestOptions());
 
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch technicals for ${ticker}: ${response.status} ${response.statusText}`
+        throw new InvestXHttpError(
+          `Failed to fetch technicals for ${ticker}: ${response.status} ${response.statusText}`,
+          response.status
         );
       }
 
@@ -449,16 +512,12 @@ export class InvestXClient {
       
       console.log(`[InvestX] Fetching watchlist`);
       
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+      const response = await fetch(url, buildGetRequestOptions());
       
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch watchlist: ${response.status} ${response.statusText}`
+        throw new InvestXHttpError(
+          `Failed to fetch watchlist: ${response.status} ${response.statusText}`,
+          response.status
         );
       }
       
