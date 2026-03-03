@@ -51,7 +51,7 @@ export const CONFIG = {
   MAX_RETRIES: 3,
   RETRY_DELAY_MS: 1000,
 
-  REQUEST_TIMEOUT_MS: 8000,
+  REQUEST_TIMEOUT_MS: 30000,
 };
 
 export type EtfPair = typeof CONFIG.ETF_PAIRS[0];
