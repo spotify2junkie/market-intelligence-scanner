@@ -130,16 +130,17 @@ export async function scanMarket(): Promise<MarketIntelligenceReport> {
     // 并发执行所有分析
     console.log('\n[Scanner] Phase 1: Fetching data and analyzing...');
     
-    const [sectorAnalyses, watchlistAnalyses, newsAnalyses] = await Promise.all([
+    const [sectorAnalyses, watchlistAnalyses] = await Promise.all([
       // 板块轮动分析
       analyzeSectorRotation(),
       
-      // Watchlist分析
+      // Watchlist分析（动态从 API 获取 ticker 列表）
       analyzeWatchlist(),
-      
-      // 新闻分析（只分析watchlist中的股票）
-      aggregateNews(CONFIG.WATCHLIST, 10)
     ]);
+    
+    // 新闻分析（使用动态的 watchlist ticker 列表）
+    const newsTickers = watchlistAnalyses.map(a => a.ticker);
+    const newsAnalyses = await aggregateNews(newsTickers, 10);
     
     console.log('\n[Scanner] Phase 2: Generating insights...');
     

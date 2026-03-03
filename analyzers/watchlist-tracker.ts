@@ -187,10 +187,17 @@ export async function analyzeWatchlist(): Promise<WatchlistItemAnalysis[]> {
     });
   }
   
+  // 从 API 动态获取 ticker 列表（如果 API 有数据则用 API，否则 fallback 到 config）
+  const tickers = watchlistData.length > 0 
+    ? watchlistData.map(item => item.ticker)
+    : CONFIG.WATCHLIST;
+  
+  console.log(`[WatchlistTracker] Analyzing ${tickers.length} tickers`);
+  
   // 并发分析所有股票
   const analyses = await Promise.all(
-    CONFIG.WATCHLIST.map(ticker => {
-      const holdingInfo = holdingMap.get(ticker.toUpperCase());
+    tickers.map(ticker => {
+      const holdingInfo = holdingMap.get(ticker.toUpperCase()) || holdingMap.get(ticker);
       return analyzeWatchlistItem(ticker, holdingInfo);
     })
   );
