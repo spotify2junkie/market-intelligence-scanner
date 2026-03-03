@@ -9,6 +9,7 @@ interface SectorEtf {
 
 interface PolygonOpenCloseResponse {
   open?: number;
+  preMarket?: number;
 }
 
 interface PolygonPrevAggResponse {
@@ -77,10 +78,12 @@ async function fetchOpenPrice(ticker: string, date: string, apiKey: string): Pro
   }
 
   const payload = await response.json() as PolygonOpenCloseResponse;
-  if (!payload.open || !Number.isFinite(payload.open)) {
+  // 盘中用 open，盘前用 preMarket
+  const openPrice = payload.open ?? payload.preMarket;
+  if (!openPrice || !Number.isFinite(openPrice)) {
     throw new Error(`Polygon open-close missing open for ${ticker}`);
   }
-  return payload.open;
+  return openPrice;
 }
 
 async function fetchPrevVwap(ticker: string, apiKey: string): Promise<number> {
